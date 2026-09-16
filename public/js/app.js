@@ -10,7 +10,7 @@ const STATUS_LIST = ["قيد المراجعة","قيد التنفيذ","تمت �
 /* ---------------- i18n ---------------- */
 const T = {
   ar: {
-    appTitle: 'رداد', appSubtitle: 'في خدمتكم دائمًا',
+    appTitle: 'مسار', appSubtitle: 'لكل طلب مسار واضح',
     loginTab: 'تسجيل الدخول', registerTab: 'حساب جديد',
     loginTitle: 'تسجيل الدخول', loginSub: 'أدخل بياناتك للوصول إلى النظام',
     registerTitle: 'إنشاء حساب موظف جديد', registerSub: 'سيتم إنشاء الحساب كموظف افتراضيًا',
@@ -44,7 +44,7 @@ const T = {
     byStatusTitle: 'توزيع الطلبات حسب الحالة', byTypeTitle: 'توزيع الطلبات حسب النوع', byDeptTitle: 'توزيع الطلبات حسب الإدارة',
   },
   en: {
-    appTitle: 'Raddad', appSubtitle: 'Always at your service',
+    appTitle: 'Masar', appSubtitle: 'Every request, a clear path',
     loginTab: 'Log In', registerTab: 'New Account',
     loginTitle: 'Log In', loginSub: 'Enter your details to access the system',
     registerTitle: 'Create Employee Account', registerSub: 'The account will be created as an employee by default',
@@ -84,7 +84,7 @@ function t(key) { return (T[state.lang] && T[state.lang][key]) || T.ar[key] || k
 const TYPE_EN = { "إجازة":"Leave", "صيانة":"Maintenance", "دعم فني":"Tech Support", "حجز قاعة اجتماعات":"Meeting Room", "مستلزمات مكتبية":"Office Supplies", "أخرى":"Other" };
 const STATUS_EN = { "قيد المراجعة":"Pending Review", "قيد التنفيذ":"In Progress", "تمت الموافقة":"Approved", "مرفوض":"Rejected" };
 const PRIORITY_EN = { "عادية":"Normal", "عاجلة":"Urgent" };
-function trType(v) { return state.lang === 'en' ? (TYPE_EN[v] || v) : v; }
+function trType(v) { return esc(state.lang === 'en' ? (TYPE_EN[v] || v) : v); }
 function trStatus(v) { return state.lang === 'en' ? (STATUS_EN[v] || v) : v; }
 function trPriority(v) { return state.lang === 'en' ? (PRIORITY_EN[v] || v) : v; }
 function trRole(r) {
@@ -182,6 +182,20 @@ function logout() {
   state.user = null;
   state.requests = [];
   state.users = [];
+  state.requestTypes = [];
+  state.stats = null;
+  state.auditLog = [];
+  state.activeRequest = null;
+  state.editingRequest = false;
+  state.comments = [];
+  state.showNewForm = false;
+  state.showUserForm = false;
+  state.showSettings = false;
+  state.editingUser = null;
+  state.adminTab = 'requests';
+  state.filterStatus = 'الكل';
+  state.filterType = 'الكل';
+  state.searchQuery = '';
   persistSession();
   state.screen = 'login';
   render();
@@ -320,7 +334,7 @@ function renderLogin() {
         </svg>
       </div>
       <div class="auth-hero-inner">
-        <div class="brand-mark pulse-ring">ر</div>
+        <div class="brand-mark pulse-ring">م</div>
         <h1 class="reveal-up d1">${t('appTitle')}</h1>
         <p class="reveal-up d2">${state.lang === 'en'
           ? 'A unified platform for staff to submit and track administrative requests, built on real security standards.'
@@ -460,7 +474,7 @@ function renderForgotPassword() {
         <div class="verify-code-hint">
           <div class="code">${state.forgotDevCode}</div>
           <p>${t('devModeNote')}</p>
-          ${state.forgotDevError ? `<p style="color:#A23B32;font-weight:600;margin-top:8px;">${state.lang==='en' ? 'Reason:' : 'السبب:'} ${state.forgotDevError}</p>` : ''}
+          ${state.forgotDevError ? `<p style="color:var(--danger);font-weight:600;margin-top:8px;">${state.lang==='en' ? 'Reason:' : 'السبب:'} ${state.forgotDevError}</p>` : ''}
         </div>` : ''}
 
       ${isRequestStep ? `
@@ -552,7 +566,7 @@ function renderVerify() {
         <div class="verify-code-hint">
           <div class="code">${state.verifyDevCode}</div>
           <p>${t('devModeNote')}</p>
-          ${state.verifyDevError ? `<p style="color:#A23B32;font-weight:600;margin-top:8px;">${state.lang==='en' ? 'Reason:' : 'السبب:'} ${state.verifyDevError}</p>` : ''}
+          ${state.verifyDevError ? `<p style="color:var(--danger);font-weight:600;margin-top:8px;">${state.lang==='en' ? 'Reason:' : 'السبب:'} ${state.verifyDevError}</p>` : ''}
         </div>` : ''}
       <label>${t('verifyCodeLabel')}</label>
       <input id="vf-code" type="text" inputmode="numeric" maxlength="6" placeholder="000000">
@@ -609,14 +623,14 @@ function renderHeader() {
   return `
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark small">ر</div>
+      <div class="brand-mark small">م</div>
       <div class="brand-text">
         <h1>${t('appTitle')}</h1>
         <p>${t('appSubtitle')}</p>
       </div>
     </div>
     <div class="who">
-      <span>${state.user.name} — ${trRole(state.user.role)}</span>
+      <span>${esc(state.user.name)} — ${trRole(state.user.role)}</span>
       <button class="icon-btn" id="btn-settings" title="${t('settings')}">⚙</button>
       <button id="btn-logout">${t('logout')}</button>
     </div>
@@ -663,9 +677,9 @@ function renderSettingsModal() {
       <div class="settings-section">
         <h4>${t('accountSection')}</h4>
         <label>${t('nameLabel')}</label>
-        <input id="sf-name" type="text" value="${state.user.name}">
+        <input id="sf-name" type="text" value="${esc(state.user.name)}">
         <label>${t('deptLabel')}</label>
-        <input id="sf-dept" type="text" value="${state.user.department || ''}">
+        <input id="sf-dept" type="text" value="${esc(state.user.department) || ''}">
         <label>${t('newPasswordOptional')}</label>
         <input id="sf-password" type="password" placeholder="••••••••">
         ${state.formError ? `<div class="err">${state.formError}</div>` : ''}
@@ -718,6 +732,17 @@ function isOverdue(r) {
   if (r.status !== 'قيد المراجعة') return false;
   const created = new Date(r.created_at.replace(' ', 'T') + 'Z').getTime();
   return (Date.now() - created) > 3 * 24 * 60 * 60 * 1000;
+}
+
+// ينقّي أي نص يُدخله مستخدم قبل عرضه داخل الصفحة، لمنع ثغرات حقن الأكواد (XSS) —
+// أي شخص يقدر يكتب عنوان طلب أو تعليق أو اسم يجب ألا يقدر يشغّل كود بمتصفح شخص آخر.
+function esc(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // يفتح تفاصيل طلب: يجلب النسخة الكاملة (تشمل المرفق) ثم التعليقات، ويعرض النافذة
@@ -823,7 +848,7 @@ function renderEmployee() {
           ${mine.map(r => `
             <tr data-id="${r.id}" class="row-view ${isOverdue(r) ? 'overdue-row' : ''}">
               <td data-label="${t('colType')}">${trType(r.type)}</td>
-              <td data-label="${t('colTitle')}">${r.title}${r.attachment_name ? ' 📎' : ''}</td>
+              <td data-label="${t('colTitle')}">${esc(r.title)}${r.attachment_name ? ' 📎' : ''}</td>
               <td data-label="${t('colDate')}">${fmtDate(r.created_at)}</td>
               <td data-label="${t('colStatus')}"><span class="badge ${statusClass(r.status)}">${trStatus(r.status)}</span>${isOverdue(r) ? `<span class="badge overdue-flag">${state.lang==='en'?'Overdue':'متأخر'}</span>` : ''}</td>
             </tr>`).join('')}
@@ -853,11 +878,11 @@ function renderNewRequestModal() {
         <label>${t('colEmployee')}</label>
         <select id="nf-employee">
           <option value="">—</option>
-          ${state.users.filter(u => u.role === 'employee').map(u => `<option value="${u.id}">${u.name} — ${u.department}</option>`).join('')}
+          ${state.users.filter(u => u.role === 'employee').map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(u.department)}</option>`).join('')}
         </select>
       ` : ''}
       <label>${t('colType')}</label>
-      <select id="nf-type">${typeNames().map(v => `<option value="${v}">${trType(v)}</option>`).join('')}</select>
+      <select id="nf-type">${typeNames().map(v => `<option value="${esc(v)}">${trType(v)}</option>`).join('')}</select>
       <label>${t('colTitle')}</label>
       <input id="nf-title" type="text">
       <label>${state.lang==='en' ? 'Additional details' : 'تفاصيل إضافية'}</label>
@@ -992,7 +1017,7 @@ function renderAdminRequestsTab() {
       </select>
       <select id="f-type">
         <option value="الكل" ${state.filterType==='الكل'?'selected':''}>${t('all')}</option>
-        ${typeNames().map(v=>`<option value="${v}" ${state.filterType===v?'selected':''}>${trType(v)}</option>`).join('')}
+        ${typeNames().map(v=>`<option value="${esc(v)}" ${state.filterType===v?'selected':''}>${trType(v)}</option>`).join('')}
       </select>
     </div>
     ${list.length === 0 ? `<div class="empty"><p>${t('noneFiltered')}</p></div>` : `
@@ -1001,9 +1026,9 @@ function renderAdminRequestsTab() {
         <tbody>
           ${list.map(r => `
             <tr data-id="${r.id}" class="row-view ${isOverdue(r) ? 'overdue-row' : ''}">
-              <td data-label="${t('colEmployee')}">${r.employee_name} <span style="color:#9a9a90;">— ${r.employee_department}</span></td>
+              <td data-label="${t('colEmployee')}">${esc(r.employee_name)} <span style="color:var(--text-faint);">— ${esc(r.employee_department)}</span></td>
               <td data-label="${t('colType')}">${trType(r.type)}</td>
-              <td data-label="${t('colTitle')}">${r.title}${r.attachment_name ? ' 📎' : ''}</td>
+              <td data-label="${t('colTitle')}">${esc(r.title)}${r.attachment_name ? ' 📎' : ''}</td>
               <td data-label="${t('colPriority')}">${trPriority(r.priority)}</td>
               <td data-label="${t('colDate')}">${fmtDate(r.created_at)}</td>
               <td data-label="${t('colStatus')}"><span class="badge ${statusClass(r.status)}">${trStatus(r.status)}</span>${isOverdue(r) ? `<span class="badge overdue-flag">${state.lang==='en'?'Overdue':'متأخر'}</span>` : ''}</td>
@@ -1027,9 +1052,9 @@ function renderAdminUsersTab() {
         <tbody>
           ${list.map(u => `
             <tr data-id="${u.id}">
-              <td data-label="${t('colName')}">${u.name}</td>
-              <td data-label="${t('colEmail')}">${u.email}</td>
-              <td data-label="${t('colDept')}">${u.department}</td>
+              <td data-label="${t('colName')}">${esc(u.name)}</td>
+              <td data-label="${t('colEmail')}">${esc(u.email)}</td>
+              <td data-label="${t('colDept')}">${esc(u.department)}</td>
               <td data-label="${t('colRole')}"><span class="badge ${u.role === 'admin' ? 'ok' : 'progress'}">${trRole(u.role)}</span></td>
               <td data-label="">
                 <button class="row-btn edit-user" data-id="${u.id}">${t('edit')}</button>
@@ -1054,7 +1079,7 @@ function renderAdminTypesTab() {
     ${state.formError ? `<div class="err" style="margin-bottom:14px;">${state.formError}</div>` : ''}
     ${state.requestTypes.map(rt => `
       <div class="type-manage-row" data-id="${rt.id}">
-        <input type="text" value="${rt.name}" data-original="${rt.name}">
+        <input type="text" value="${esc(rt.name)}" data-original="${esc(rt.name)}">
         <button class="row-btn save-type" data-id="${rt.id}">${t('save')}</button>
         <button class="row-btn danger delete-type" data-id="${rt.id}">${t('delete')}</button>
       </div>`).join('')}
@@ -1092,7 +1117,25 @@ function renderAdminIndicatorsTab() {
 // لتفادي خطأ Chart.js عند إعادة استخدام نفس عنصر canvas.
 function renderIndicatorCharts() {
   const s = state.stats;
-  if (!s || typeof Chart === 'undefined') return;
+  if (!s) return;
+
+  if (typeof Chart === 'undefined') {
+    // فشل تحميل مكتبة الرسوم البيانية (مشكلة اتصال بالإنترنت غالبًا) — نعرض رسالة واضحة
+    // بدل ترك المساحة فارغة بصمت، ونعيد المحاولة تلقائيًا بعد قليل.
+    document.querySelectorAll('.charts-grid .chart-card').forEach(card => {
+      const canvas = card.querySelector('canvas');
+      if (canvas && !card.querySelector('.chart-fallback')) {
+        const msg = document.createElement('p');
+        msg.className = 'chart-fallback';
+        msg.style.cssText = 'color:var(--text-faint);font-size:12.5px;text-align:center;padding:30px 10px;';
+        msg.textContent = state.lang === 'en'
+          ? 'Could not load the charts library. Check your internet connection.'
+          : 'تعذر تحميل مكتبة الرسوم البيانية، تحقق من اتصالك بالإنترنت.';
+        canvas.replaceWith(msg);
+      }
+    });
+    return;
+  }
 
   Object.values(state.charts).forEach(c => c && c.destroy());
   state.charts = {};
@@ -1184,10 +1227,10 @@ function renderAdminAuditTab() {
           ${list.map(a => `
             <tr>
               <td data-label="${state.lang==='en'?'Time':'الوقت'}">${fmtDate(a.created_at)}</td>
-              <td data-label="${state.lang==='en'?'Actor':'الفاعل'}">${a.actor_name}</td>
+              <td data-label="${state.lang==='en'?'Actor':'الفاعل'}">${esc(a.actor_name)}</td>
               <td data-label="${state.lang==='en'?'Action':'الإجراء'}"><span class="audit-action ${a.action}">${actionLabel(a.action)}</span></td>
               <td data-label="${state.lang==='en'?'Target':'العنصر'}">${targetLabel(a.target_type)}</td>
-              <td data-label="${state.lang==='en'?'Details':'التفاصيل'}">${a.details || '—'}</td>
+              <td data-label="${state.lang==='en'?'Details':'التفاصيل'}">${esc(a.details) || '—'}</td>
             </tr>`).join('')}
         </tbody>
       </table>`}
@@ -1370,11 +1413,11 @@ function renderRequestModal() {
       <div class="modal">
         <h3>${t('edit')}</h3>
         <label>${t('colType')}</label>
-        <select id="ef-type">${typeNames().map(v => `<option value="${v}" ${v===r.type?'selected':''}>${trType(v)}</option>`).join('')}</select>
+        <select id="ef-type">${typeNames().map(v => `<option value="${esc(v)}" ${v===r.type?'selected':''}>${trType(v)}</option>`).join('')}</select>
         <label>${t('colTitle')}</label>
-        <input id="ef-title" type="text" value="${r.title}">
+        <input id="ef-title" type="text" value="${esc(r.title)}">
         <label>${state.lang==='en' ? 'Additional details' : 'تفاصيل إضافية'}</label>
-        <textarea id="ef-desc" rows="4">${r.description || ''}</textarea>
+        <textarea id="ef-desc" rows="4">${esc(r.description) || ''}</textarea>
         <label>${t('colPriority')}</label>
         <select id="ef-priority">
           <option value="عادية" ${r.priority==='عادية'?'selected':''}>${trPriority('عادية')}</option>
@@ -1458,8 +1501,8 @@ function renderRequestModal() {
         ? `<p class="no-comments">${state.lang==='en' ? 'No comments yet.' : 'لا توجد تعليقات بعد.'}</p>`
         : state.comments.map(c => `
             <div class="comment-item">
-              <div class="comment-meta"><b>${c.author_name}</b><span>${fmtDate(c.created_at)}</span></div>
-              <p>${c.message}</p>
+              <div class="comment-meta"><b>${esc(c.author_name)}</b><span>${fmtDate(c.created_at)}</span></div>
+              <p>${esc(c.message)}</p>
             </div>`).join('')}
       <div class="comment-form">
         <textarea id="new-comment" rows="2" placeholder="${state.lang==='en' ? 'Write a comment...' : 'اكتب تعليقًا...'}"></textarea>
@@ -1469,19 +1512,19 @@ function renderRequestModal() {
 
   overlay.innerHTML = `
     <div class="modal">
-      <h3>${r.title}</h3>
-      ${isAdmin ? `<div class="detail-row"><span>${t('colEmployee')}</span><span>${r.employee_name}</span></div>
-      <div class="detail-row"><span>${t('colDept')}</span><span>${r.employee_department}</span></div>` : ''}
+      <h3>${esc(r.title)}</h3>
+      ${isAdmin ? `<div class="detail-row"><span>${t('colEmployee')}</span><span>${esc(r.employee_name)}</span></div>
+      <div class="detail-row"><span>${t('colDept')}</span><span>${esc(r.employee_department)}</span></div>` : ''}
       <div class="detail-row"><span>${t('colType')}</span><span>${trType(r.type)}</span></div>
       <div class="detail-row"><span>${t('colPriority')}</span><span>${trPriority(r.priority)}</span></div>
       <div class="detail-row"><span>${t('colDate')}</span><span>${fmtDate(r.created_at)}</span></div>
       <div class="detail-row"><span>${t('colStatus')}</span><span class="badge ${statusClass(r.status)}">${trStatus(r.status)}</span>${isOverdue(r) ? `<span class="badge overdue-flag">${state.lang==='en'?'Overdue':'متأخر'}</span>` : ''}</div>
-      ${r.description ? `<div style="margin-top:14px;"><span style="color:#7a7a70;font-size:13px;">${state.lang==='en'?'Details:':'التفاصيل:'}</span><p style="font-size:13.5px;margin:6px 0 0;">${r.description}</p></div>` : ''}
+      ${r.description ? `<div style="margin-top:14px;"><span style="color:var(--text-muted);font-size:13px;">${state.lang==='en'?'Details:':'التفاصيل:'}</span><p style="font-size:13.5px;margin:6px 0 0;">${esc(r.description)}</p></div>` : ''}
       ${attachmentHtml}
-      ${r.admin_note ? `<div style="margin-top:14px;"><span style="color:#7a7a70;font-size:13px;">${state.lang==='en'?'Admin note:':'ملاحظة الإدارة:'}</span><p style="font-size:13.5px;margin:6px 0 0;">${r.admin_note}</p></div>` : ''}
+      ${r.admin_note ? `<div style="margin-top:14px;"><span style="color:var(--text-muted);font-size:13px;">${state.lang==='en'?'Admin note:':'ملاحظة الإدارة:'}</span><p style="font-size:13.5px;margin:6px 0 0;">${esc(r.admin_note)}</p></div>` : ''}
       ${isAdmin ? `
         <label style="margin-top:16px;">${state.lang==='en'?'Note (optional)':'ملاحظة (اختياري)'}</label>
-        <textarea id="dt-note" rows="2">${r.admin_note || ''}</textarea>
+        <textarea id="dt-note" rows="2">${esc(r.admin_note) || ''}</textarea>
         <div class="admin-actions">
           <button style="background:var(--wait);" id="act-progress">${t('inProgress')}</button>
           <button style="background:var(--ok);" id="act-approve">${t('approved')}</button>
