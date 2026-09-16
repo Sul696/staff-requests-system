@@ -23,6 +23,15 @@ async function main() {
   app.use(cors());
   app.use(express.json({ limit: '5mb' })); // حد أعلى لدعم إرفاق ملفات صغيرة (Base64) مع الطلبات
 
+  // ترويسات أمان أساسية: تمنع تضمين الموقع داخل iframe من موقع آخر (Clickjacking)،
+  // وتمنع المتصفح من "تخمين" نوع الملف الحقيقي بعكس ما يُعلن (MIME-sniffing)
+  app.use((req, res, next) => {
+    res.set('X-Frame-Options', 'DENY');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
   // يمنع أي تخزين مؤقت (Cache) من المتصفح لاستجابات الـ API — البيانات دايمًا يجب أن تكون طازجة
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');

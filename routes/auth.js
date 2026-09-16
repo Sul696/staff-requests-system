@@ -5,6 +5,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { get, run } = require('../db/database');
 const { verifyToken } = require('../middleware/auth');
 const { sendVerificationCode, sendPasswordResetCode } = require('../lib/mailer');
@@ -19,8 +20,10 @@ function signToken(user) {
   );
 }
 
+// يستخدم مولّد أرقام عشوائي آمن تشفيريًا (وليس Math.random العادي) — مهم لأن هذا الرمز
+// يُستخدم للتحقق من الهوية وإعادة تعيين كلمات المرور، فيجب ألا يكون متوقعًا لأي طرف خارجي.
 function generateCode() {
-  return String(Math.floor(100000 + Math.random() * 900000)); // رمز من 6 أرقام
+  return String(crypto.randomInt(100000, 1000000)); // رمز من 6 أرقام
 }
 
 // يلتقط أي خطأ غير متوقع من مسارات async ويحوّله لرد 500 بدل تعليق الطلب
@@ -29,6 +32,58 @@ function asyncRoute(handler) {
     console.error('خطأ غير متوقع:', err);
     res.status(500).json({ error: 'حدث خطأ بالخادم، حاول مجددًا' });
   });
+}
+
+// حماية من تخمين رموز التحقق/إعادة التعيين (6 أرقام = مليون احتمال) — بدون هذا الحد،
+// أي مهاجم يقدر يجرّب آليًا كل الاحتمالات ويستولي على أي حساب خلال دقائق.
+// نفس منطق قفل تسجيل الدخول: 5 محاولات فاشلة تقفل المحاولة لـ 15 دقيقة لكل بريد إلكتروني.
+const codeGuessAttempts = new Map(); // email -> { count, lockedUntil }
+const CODE_MAX_ATTEMPTS = 5;
+const CODE_LOCK_MINUTES = 15;
+
+function checkCodeRateLimit(email) {
+  const entry = codeGuessAttempts.get(email);
+  if (!entry) return null;
+  if (entry.lockedUntil && entry.lockedUntil > Date.now()) {
+    const minutesLeft = Math.max(1, Math.ceil((entry.lockedUntil - Date.now()) / 60000));
+    return `عدد كبير من المحاولات الفاشلة. حاول مجددًا بعد ${minutesLeft} دقيقة تقريبًا.`;
+  }
+  if (entry.lockedUntil && entry.lockedUntil <= Date.now()) {
+    codeGuessAttempts.delete(email); // انتهت مدة القفل
+  }
+  return null;
+}
+
+function recordFailedCodeAttempt(email) {
+  const entry = codeGuessAttempts.get(email) || { count: 0, lockedUntil: null };
+  entry.count += 1;
+  if (entry.count >= CODE_MAX_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + CODE_LOCK_MINUTES * 60000;
+    entry.count = 0;
+  }
+  codeGuessAttempts.set(email, entry);
+}
+
+function clearCodeAttempts(email) {
+  codeGuessAttempts.delete(email);
+}
+
+// يمنع إرسال رموز متكررة بسرعة لنفس البريد (حماية من إغراق صندوق بريد شخص آخر
+// أو استنزاف رصيد إرسال البريد الإلكتروني عبر طلبات آلية متكررة).
+const sendCooldown = new Map(); // email -> lastSentTimestamp
+const SEND_COOLDOWN_SECONDS = 30;
+
+function checkSendCooldown(email) {
+  const last = sendCooldown.get(email);
+  if (last && Date.now() - last < SEND_COOLDOWN_SECONDS * 1000) {
+    const secondsLeft = Math.ceil((SEND_COOLDOWN_SECONDS * 1000 - (Date.now() - last)) / 1000);
+    return `الرجاء الانتظار ${secondsLeft} ثانية قبل طلب رمز جديد.`;
+  }
+  return null;
+}
+
+function recordSend(email) {
+  sendCooldown.set(email, Date.now());
 }
 
 // POST /api/auth/register -> تسجيل موظف جديد (الدور دائمًا "employee")
@@ -72,10 +127,17 @@ router.post('/verify-email', asyncRoute(async (req, res) => {
   const { email, code } = req.body;
   if (!email || !code) return res.status(400).json({ error: 'البريد الإلكتروني والرمز مطلوبان' });
 
+  const limitMsg = checkCodeRateLimit(email);
+  if (limitMsg) return res.status(429).json({ error: limitMsg });
+
   const row = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!row) return res.status(404).json({ error: 'الحساب غير موجود' });
   if (row.email_verified) return res.status(400).json({ error: 'هذا الحساب مُفعَّل مسبقًا' });
-  if (row.verification_code !== code) return res.status(400).json({ error: 'رمز التفعيل غير صحيح' });
+  if (row.verification_code !== code) {
+    recordFailedCodeAttempt(email);
+    return res.status(400).json({ error: 'رمز التفعيل غير صحيح' });
+  }
+  clearCodeAttempts(email);
 
   await run('UPDATE users SET email_verified = 1, verification_code = NULL WHERE id = ?', [row.id]);
 
@@ -89,12 +151,16 @@ router.post('/resend-verification', asyncRoute(async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
 
+  const cooldownMsg = checkSendCooldown(email);
+  if (cooldownMsg) return res.status(429).json({ error: cooldownMsg });
+
   const row = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!row) return res.status(404).json({ error: 'الحساب غير موجود' });
   if (row.email_verified) return res.status(400).json({ error: 'هذا الحساب مُفعَّل مسبقًا' });
 
   const code = generateCode();
   await run('UPDATE users SET verification_code = ? WHERE id = ?', [code, row.id]);
+  recordSend(email);
 
   const mailResult = await sendVerificationCode(email, code);
   res.json({
@@ -113,12 +179,16 @@ router.post('/forgot-password', asyncRoute(async (req, res) => {
     message: 'إذا كان البريد الإلكتروني مسجّلًا لدينا، ستصلك رسالة تحتوي على رمز إعادة التعيين'
   };
 
+  const cooldownMsg = checkSendCooldown(email);
+  if (cooldownMsg) return res.status(429).json({ error: cooldownMsg });
+
   const row = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!row) return res.json(genericResponse); // لا نكشف عدم وجود الحساب
 
   const code = generateCode();
   const expires = new Date(Date.now() + 15 * 60000).toISOString().slice(0, 19);
   await run('UPDATE users SET reset_code = ?, reset_expires = ? WHERE id = ?', [code, expires, row.id]);
+  recordSend(email);
 
   const mailResult = await sendPasswordResetCode(email, code);
   res.json({
@@ -138,9 +208,16 @@ router.post('/reset-password', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'يجب ألا تقل كلمة المرور الجديدة عن 8 أحرف' });
   }
 
+  const limitMsg = checkCodeRateLimit(email);
+  if (limitMsg) return res.status(429).json({ error: limitMsg });
+
   const row = await get('SELECT * FROM users WHERE email = ?', [email]);
   if (!row || !row.reset_code) return res.status(400).json({ error: 'رمز غير صالح أو منتهي الصلاحية' });
-  if (row.reset_code !== code) return res.status(400).json({ error: 'رمز غير صحيح' });
+  if (row.reset_code !== code) {
+    recordFailedCodeAttempt(email);
+    return res.status(400).json({ error: 'رمز غير صحيح' });
+  }
+  clearCodeAttempts(email);
 
   const expiresMs = new Date(row.reset_expires + 'Z').getTime();
   if (Date.now() > expiresMs) {
