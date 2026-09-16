@@ -403,6 +403,7 @@ function attachLoginHandlers() {
         state.formError = '';
         state.screen = state.user.role === 'admin' ? 'admin' : 'employee';
         render();
+        await refreshRequestTypes();
         await refreshRequests();
         if (state.user.role === 'admin') await refreshUsers();
       } else {
@@ -579,6 +580,7 @@ function attachVerifyHandlers() {
       state.verifyError = '';
       state.screen = state.user.role === 'admin' ? 'admin' : 'employee';
       render();
+      await refreshRequestTypes();
       await refreshRequests();
       if (state.user.role === 'admin') await refreshUsers();
     } catch (err) {
