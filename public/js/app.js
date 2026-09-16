@@ -152,7 +152,17 @@ async function apiFetch(path, options = {}) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
 
-  const res = await fetch(API + path, Object.assign({}, options, { headers }));
+  // إعادة محاولة تلقائية مرة واحدة عند فشل الاتصال بالشبكة نفسه (وليس خطأ HTTP عادي) —
+  // يعالج حالة "استيقاظ" الخادم من السكون على Render المجاني، حيث الطلب الأول بعد فترة خمول
+  // قد يفشل بالكامل قبل أن يجهز الخادم، بينما المحاولة التالية بعد ثوانٍ تنجح مباشرة.
+  let res;
+  try {
+    res = await fetch(API + path, Object.assign({}, options, { headers }));
+  } catch (networkErr) {
+    await new Promise(r => setTimeout(r, 2500));
+    res = await fetch(API + path, Object.assign({}, options, { headers }));
+  }
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || 'حدث خطأ غير متوقع');
